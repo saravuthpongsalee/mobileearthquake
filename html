@@ -1,0 +1,163 @@
+<!-- index.html -->
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>3D Earthquake Viewer</title>
+  <style>
+    body { margin: 0; font-family: sans-serif; background: #f0f0f0; }
+    canvas { display: block; }
+    #ui {
+      position: absolute;
+      top: 10px; left: 10px;
+      background: rgba(255,255,255,0.9);
+      padding: 15px;
+      border-radius: 10px;
+      z-index: 10;
+      width: 300px;
+    }
+    input {
+      width: 100%; margin-bottom: 10px; padding: 5px; font-size: 14px;
+    }
+    #startBtn {
+      background: green; color: white; border: none;
+      padding: 10px; width: 100%;
+      border-radius: 5px; font-size: 16px;
+      cursor: pointer;
+    }
+    #graph {
+      position: absolute; bottom: 0; left: 0;
+      width: 100%; height: 200px;
+      background: black;
+      z-index: 5;
+    }
+  </style>
+</head>
+<body>
+  <div id="ui">
+    <label>ชื่อผู้ใช้:</label>
+    <input type="text" id="name" placeholder="กรอกชื่อ">
+    <label>สถานที่:</label>
+    <input type="text" id="location" placeholder="เช่น ห้อง 101">
+    <label>Device ID:</label>
+    <input type="text" id="deviceId" placeholder="เช่น A1, B2">
+    <label>G-Threshold (g):</label>
+    <input type="number" id="gThreshold" value="2.0" step="0.1">
+    <div><b>Acceleration (m/s²)</b></div>
+    X: <span id="accX">0</span><br>
+    Y: <span id="accY">0</span><br>
+    Z: <span id="accZ">0</span><br><br>
+    <div><b>Rotation (°)</b></div>
+    α: <span id="alpha">0</span><br>
+    β: <span id="beta">0</span><br>
+    γ: <span id="gamma">0</span><br><br>
+    <div><b>G-force:</b> <span id="gForce">0</span> g</div><br>
+    <button id="startBtn">เริ่มต้น</button>
+  </div>
+
+  <canvas id="graph"></canvas>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+  <script>
+    let scene = new THREE.Scene();
+    let camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+    let renderer = new THREE.WebGLRenderer({antialias: true});
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    let phone = new THREE.Mesh(
+      new THREE.BoxGeometry(2, 1, 0.1),
+      new THREE.MeshNormalMaterial()
+    );
+    scene.add(phone);
+    scene.add(new THREE.AxesHelper(5));
+    camera.position.z = 5;
+
+    function animate() {
+      requestAnimationFrame(animate);
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    document.getElementById("startBtn").addEventListener("click", async () => {
+      if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+        const permission = await DeviceOrientationEvent.requestPermission();
+        if (permission !== 'granted') {
+          alert("กรุณาอนุญาตการเข้าถึงเซ็นเซอร์");
+          return;
+        }
+      }
+      startSensors();
+      document.getElementById("startBtn").style.display = "none";
+    });
+
+    const graphCanvas = document.getElementById("graph");
+    const ctx = graphCanvas.getContext("2d");
+    graphCanvas.width = window.innerWidth;
+    graphCanvas.height = 200;
+    let graphData = [];
+
+    function drawGraph(val) {
+      graphData.push(val);
+      if (graphData.length > graphCanvas.width) graphData.shift();
+      ctx.clearRect(0, 0, graphCanvas.width, graphCanvas.height);
+      ctx.beginPath();
+      ctx.moveTo(0, 100 - graphData[0] * 10);
+      for (let i = 1; i < graphData.length; i++) {
+        ctx.lineTo(i, 100 - graphData[i] * 10);
+      }
+      ctx.strokeStyle = "red";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+
+    function startSensors() {
+      window.addEventListener("deviceorientation", (event) => {
+        let alpha = event.alpha || 0;
+        let beta = event.beta || 0;
+        let gamma = event.gamma || 0;
+        document.getElementById("alpha").textContent = alpha.toFixed(1);
+        document.getElementById("beta").textContent = beta.toFixed(1);
+        document.getElementById("gamma").textContent = gamma.toFixed(1);
+        phone.rotation.x = beta * Math.PI / 180;
+        phone.rotation.y = gamma * Math.PI / 180;
+        phone.rotation.z = alpha * Math.PI / 180;
+      });
+
+      window.addEventListener("devicemotion", (event) => {
+        const acc = event.accelerationIncludingGravity || {};
+        let accX = acc.x || 0;
+        let accY = acc.y || 0;
+        let accZ = acc.z || 0;
+        let g = Math.sqrt(accX**2 + accY**2 + accZ**2) / 9.8;
+
+        document.getElementById("accX").textContent = accX.toFixed(2);
+        document.getElementById("accY").textContent = accY.toFixed(2);
+        document.getElementById("accZ").textContent = accZ.toFixed(2);
+        document.getElementById("gForce").textContent = g.toFixed(2);
+
+        drawGraph(g);
+
+        const name = document.getElementById("name").value.trim();
+        const location = document.getElementById("location").value.trim();
+        const deviceId = document.getElementById("deviceId").value.trim();
+        const gThresholdInput = document.getElementById("gThreshold");
+        gThresholdInput.value = gThresholdInput.value.trim();
+        const gThreshold = parseFloat(gThresholdInput.value);
+
+        if (name && location && deviceId) {
+          google.script.run.saveSensorData({
+            name, location, deviceId,
+            accX, accY, accZ,
+            rotAlpha: parseFloat(document.getElementById("alpha").textContent),
+            rotBeta: parseFloat(document.getElementById("beta").textContent),
+            rotGamma: parseFloat(document.getElementById("gamma").textContent),
+            gForce: g,
+            gThreshold
+          });
+        }
+      });
+    }
+  </script>
+</body>
+</html>
